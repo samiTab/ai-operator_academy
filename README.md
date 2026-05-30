@@ -77,3 +77,5 @@ rather than the dev proxy. See `docs/pricing-model.md` for the cost/price model.
 
     npm run build      # outputs to dist/
     npm run preview    # preview the production build locally
+
+## force redeploy
