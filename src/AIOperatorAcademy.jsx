@@ -214,10 +214,9 @@ Return ONLY JSON: {"outcome","feedback_markdown","first_try_success":bool,"showe
 
 function fallbackGrade(sub) {
   const len = (sub || "").trim().length;
-  if (len < 25) return { outcome: "developing", feedback_markdown: "You're on the board — but there's not quite enough here yet for Claude (or me) to work with. Add the specifics: who it's for, the exact output you want, and your style. Then give it another go.", first_try_success: false, showed_advanced_ability: false };
-  const hasStructure = /(format|bullet|section|audience|tone|style|email|table|word|step)/i.test(sub);
-  if (hasStructure && len > 90) return { outcome: "solid", feedback_markdown: "Nicely done — you briefed it like a manager, with real specifics. That's exactly the habit that makes outputs usable on the first try. Next time, try adding one example of the style you want and watch it get even sharper.", first_try_success: true, showed_advanced_ability: len > 220 };
-  return { outcome: "developing", feedback_markdown: "Good start, and your intent is clear. The upgrade: be explicit about the FORMAT you want (sections, length) and the STYLE (tone, or an example to match). Add those two lines and re-run — it'll jump in quality.", first_try_success: false, showed_advanced_ability: false };
+  if (len < 25) return { outcome: "developing", feedback_markdown: "You're on the board — but there's not quite enough here yet to work with. Add the specifics: who it's for, the exact output you want, and any style notes. Then give it another go.", first_try_success: false, showed_advanced_ability: false };
+  if (len >= 60) return { outcome: "solid", feedback_markdown: "Good work putting this together. You've given the brief real context — that's the habit that makes AI outputs usable on the first try. Keep naming the role, the context, and the exact output you want.", first_try_success: len > 120, showed_advanced_ability: len > 250 };
+  return { outcome: "developing", feedback_markdown: "Good start, and your intent is clear. The upgrade: be specific about WHO it's for, WHAT the exact output should look like (length, format), and the TONE. Add those details and resubmit.", first_try_success: false, showed_advanced_ability: false };
 }
 
 /* ---- progress-coach (live adaptivity) — reads recent grading signals and tunes the
@@ -676,6 +675,11 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
   const [copied, setCopied] = useState(false);
   const [showKey, setShowKey] = useState(false);
 
+  // Scroll to top whenever a new lesson mounts (key={idx} causes remount on each lesson change)
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }) }, []);
+
+  const feedbackRef = useRef(null);
+
   const starterPrompt = (A && A.assetCode) || (A ? stripMd(A.taskMd) : (L.task || ""));
   const copyStarter = async () => {
     try { await navigator.clipboard.writeText(starterPrompt); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch (e) {}
@@ -711,6 +715,7 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
       g = await chatJson({ system: GRADER_SYS, user: `TASK: ${taskSummary}${rubricText}\n\nLEARNER SUBMISSION (their prompt${sandboxOut ? " + the result they got" : ""}):\n${draft}\n\n${sandboxOut ? "RESULT:\n" + sandboxOut.slice(0, 600) : ""}`, task: "grader", maxTokens: 700, validate: (x) => x && x.outcome });
     } catch (e) { g = fallbackGrade(draft); }
     setResult(g); setGrading(false);
+    setTimeout(() => feedbackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
     if (g.outcome === "solid" || g.outcome === "mastered") {
       const signals = {
         first_try_success: thisAttempt === 1 && !!g.first_try_success,
@@ -851,12 +856,28 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
             <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <Btn onClick={submit} disabled={grading || !draft.trim()} icon={grading ? Loader2 : Send}>{grading ? "Getting feedback…" : "Submit for feedback"}</Btn>
               {result && !passed && <span style={{ color: T.faint, fontSize: 13 }}>Tweak your prompt above and resubmit — no penalty for trying again.</span>}
+              {attempts >= 1 && !passed && (
+                <button onClick={() => {
+                  onComplete(m.module_id, "solid", roiMin, { first_try_success: false, showed_advanced_ability: false, attempts, struggled: true });
+                  onNext();
+                }} style={{ background: "transparent", border: "none", color: T.faint, fontSize: 13, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                  Skip and continue →
+                </button>
+              )}
             </div>
           )}
 
-          {result && (
-            <Feedback result={result} />
-          )}
+          <div ref={feedbackRef}>
+            {result && <Feedback result={result} />}
+            {passed && (
+              <div style={{ marginTop: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Btn onClick={onNext} icon={idx < plan.path.length - 1 ? ArrowRight : Award}>
+                  {idx < plan.path.length - 1 ? "Next lesson" : "Finish & see dashboard"}
+                </Btn>
+                <Btn kind="ghost" onClick={onJumpDash}>Dashboard</Btn>
+              </div>
+            )}
+          </div>
 
           {/* APPLY + RETAIN + ROI after passing */}
           {passed && (
@@ -892,10 +913,6 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
               <div style={{ display: "flex", alignItems: "center", gap: 12, background: `${T.amber}14`, border: `1px solid ${T.amber}40`, borderRadius: 14, padding: "16px 18px" }}>
                 <TrendingUp size={20} color={T.amber} />
                 <div><b style={{ color: T.amberHi }}>≈ {roiMin} min saved</b> <span style={{ color: T.dim }}>each time you do this. That stacks up fast — and it's now tracked on your dashboard.</span></div>
-              </div>
-              <div style={{ marginTop: 26, display: "flex", gap: 10 }}>
-                <Btn onClick={onNext} icon={idx < plan.path.length - 1 ? ArrowRight : Award}>{idx < plan.path.length - 1 ? "Next lesson" : "Finish & see dashboard"}</Btn>
-                <Btn kind="ghost" onClick={onJumpDash}>Dashboard</Btn>
               </div>
             </div>
           )}
