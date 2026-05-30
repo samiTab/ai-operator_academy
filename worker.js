@@ -142,6 +142,15 @@ export default {
       return handleLearner(request, env)
     }
 
-    return env.ASSETS.fetch(request)
+    try {
+      const res = await env.ASSETS.fetch(request)
+      if (res.status === 404) {
+        // SPA fallback — serve index.html for any unknown path
+        return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request))
+      }
+      return res
+    } catch {
+      return env.ASSETS.fetch(new Request(new URL("/index.html", request.url), request))
+    }
   },
 }
