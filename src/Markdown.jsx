@@ -13,8 +13,8 @@ function inline(text, T, mono, keyBase) {
   const nodes = [];
   let rest = text;
   let k = 0;
-  // tokenizer over **bold**, `code`, screenshot
-  const re = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|(!\[[^\]]*\]\(screenshot:\s*([^)]*)\))/g;
+  // tokenizer over **bold**, *italic*, `code`, screenshot, and [text](url) links
+  const re = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|(!\[[^\]]*\]\(screenshot:\s*([^)]*)\))|(\[([^\]]+)\]\((https?:\/\/[^)]+)\))|(\*([^*\n]+)\*)/g;
   let last = 0;
   let m;
   while ((m = re.exec(rest)) !== null) {
@@ -29,6 +29,13 @@ function inline(text, T, mono, keyBase) {
           ▦ {m[6].trim()}
         </span>
       );
+    } else if (m[8] != null) {
+      nodes.push(
+        <a key={`${keyBase}-l${k++}`} href={m[9]} target="_blank" rel="noopener noreferrer"
+          style={{ color: T.amberHi, textDecoration: "underline", textUnderlineOffset: 2, textDecorationColor: `${T.amber}66` }}>{m[8]}</a>
+      );
+    } else if (m[11] != null) {
+      nodes.push(<em key={`${keyBase}-i${k++}`} style={{ fontStyle: "italic", color: T.dim }}>{m[11]}</em>);
     }
     last = re.lastIndex;
   }

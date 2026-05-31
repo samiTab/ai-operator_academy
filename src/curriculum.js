@@ -24,6 +24,21 @@ const ROI_MIN = {
   CAP: 120,
 };
 
+// Realistic "active minutes to complete this lesson" (read the beats + do the
+// hands-on exercise once). Distinct from ROI_MIN (time the asset saves later).
+// Sums across a path drive the "minutes/day" pacing shown on the path screen.
+export const TIME_MIN = {
+  F1: 15, F2: 15, F3: 20,
+  A1: 18, A2: 20, A3: 20, A4: 15,
+  B1: 20, B2: 25, B3: 20, B4: 20,
+  C1: 15, C2: 20, C3: 20, C4: 25,
+  D1: 18, D2: 20, D3: 18, D4: 15,
+  CAP: 40,
+};
+export function timeToComplete(moduleId) {
+  return TIME_MIN[moduleId] != null ? TIME_MIN[moduleId] : 18;
+}
+
 function parseFrontmatter(raw) {
   const fm = {};
   const m = raw.match(/<!--([\s\S]*?)-->/);
@@ -77,9 +92,12 @@ function parseLesson(raw) {
   const rj = raw.match(/```json\s*([\s\S]*?)```/);
   if (rj) { try { rubric = JSON.parse(rj[1]); } catch (e) { rubric = null; } }
 
-  const sections = splitSections(raw);
+  // Strip the grading-rubric ```json block before sectioning, so it doesn't get
+  // appended to the last prose section (e.g. "Honest limit" / "Go deeper").
+  const body = raw.replace(/```json\s*[\s\S]*?```/g, "").trimEnd();
+  const sections = splitSections(body);
   const beats = {};
-  let assetMd = "", mistakesMd = "", limitMd = "";
+  let assetMd = "", mistakesMd = "", limitMd = "", caseStudyMd = "", sourcesMd = "";
   for (const s of sections) {
     if (s.level === 2) {
       const n = s.title.match(/^(\d+)\./);
@@ -89,6 +107,8 @@ function parseLesson(raw) {
       if (t.includes("keepable asset")) assetMd = s.md;
       else if (t.includes("common mistakes")) mistakesMd = s.md;
       else if (t.includes("honest limit")) limitMd = s.md;
+      else if (t.includes("case study") || t.includes("from the field")) caseStudyMd = s.md;
+      else if (t.includes("go deeper") || t.includes("sources")) sourcesMd = s.md;
     }
   }
 
@@ -111,6 +131,8 @@ function parseLesson(raw) {
     assetCode: firstCodeBlock(assetMd),
     mistakesMd,
     limitMd,
+    caseStudyMd,
+    sourcesMd,
     roiMin: ROI_MIN[id] != null ? ROI_MIN[id] : 25,
     rubric,
     unlocksCertificate: !!(rubric && rubric.unlocks_certificate),

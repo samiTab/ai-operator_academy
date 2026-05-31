@@ -5,9 +5,11 @@ import {
   Gauge, BookOpen, Play, Send, Loader2, Award, Flame, TrendingUp,
   ChevronRight, RotateCcw, Lock, Zap, CircleCheck, Lightbulb, ShieldAlert,
   AlertTriangle, Gift, Copy, KeyRound, ExternalLink, Flag,
+  CalendarClock, Timer, Quote, Compass, Brain, Rocket, Wrench, Users,
+  FileText, Search, Bot, ShieldCheck, GraduationCap, PlayCircle, BarChart3,
 } from "lucide-react";
 import Markdown from "./Markdown.jsx";
-import { getAuthoredLesson } from "./curriculum.js";
+import { getAuthoredLesson, timeToComplete } from "./curriculum.js";
 import { chat, chatJson, parseJsonLoose } from "./llm.js";
 import { goalFor, milestoneState } from "./goals.js";
 import { applyOverlay, goalConnector, overlayContext } from "./overlay.js";
@@ -43,24 +45,25 @@ const mono = "'JetBrains Mono', monospace";
 
 /* ============================== DATA ============================== */
 const QUESTIONS = [
-  { id: "role", q: "Which best describes you?", type: "single",
+  { id: "role", icon: Users, q: "Which best describes you?", type: "single",
     options: ["Business owner", "Manager / Team lead", "Independent (freelancer / solo)", "Just exploring for now"] },
-  { id: "industry", q: "What's your field?", type: "single",
+  { id: "industry", icon: Compass, q: "What's your field?", type: "single",
     options: ["Marketing & Creative", "Real estate", "Professional services / Consulting", "E-commerce & Retail",
       "Finance & Accounting", "Legal", "Healthcare / Wellness", "Trades & Local services", "Other"] },
-  { id: "goal", q: "What do you most want from AI right now?", type: "single",
+  { id: "goal", icon: Target, q: "What do you most want from AI right now?", type: "single",
     options: ["Automate a repetitive workflow", "Build a tool or solution", "Boost my own daily output",
       "Train my team to use AI", "Explore what's possible"] },
-  { id: "task", q: "Name the ONE task you'd love to hand off.", type: "text",
+  { id: "task", icon: Wrench, q: "Name the ONE task you'd love to hand off.", type: "text",
     hint: "Be specific — this becomes the real thing you'll build by the end.",
     placeholder: "e.g. Turning messy meeting notes into a polished client follow-up email + action list" },
-  { id: "experience", q: "How much have you used AI tools?", type: "single",
+  { id: "experience", icon: Brain, q: "How much have you used AI tools?", type: "single",
     options: ["Never really", "I chat with it sometimes", "I use AI most days", "I've built things with it"] },
-  { id: "tech", q: "How do you feel about technical tools (files, terminal, code)?", type: "single",
+  { id: "tech", icon: Terminal, q: "How do you feel about technical tools (files, terminal, code)?", type: "single",
     options: ["I avoid that stuff", "Willing if you guide me", "Fairly comfortable", "I code"] },
-  { id: "time", q: "Realistically, how much time per week?", type: "single",
-    options: ["Under 1 hour", "1–3 hours", "3–5 hours", "5+ hours"] },
-  { id: "success", q: "What would make the next 30 days a clear win?", type: "text",
+  { id: "time", icon: CalendarClock, q: "How much time can you give it on a typical day?", type: "single",
+    hint: "Small daily reps beat occasional marathons — we'll pace your path to fit.",
+    options: ["~10 min/day", "~20 min/day", "~30 min/day", "45+ min/day"] },
+  { id: "success", icon: Award, q: "What would make the next 30 days a clear win?", type: "text",
     hint: "Your north star — we measure the course against this.",
     placeholder: "e.g. Every proposal goes out same-day instead of taking me two evenings" },
 ];
@@ -88,6 +91,7 @@ const LIBRARY = {
   CAP: { id: "CAP", track: "CAP", title: "Ship your asset", blurb: "Build and ship the real thing from your goals. Unlocks your certificate." },
 };
 const TRACK_NAME = { F: "Foundations", A: "Operator", B: "Builder", C: "Automator", D: "Team Leader", CAP: "Capstone" };
+const TRACK_ICON = { F: Compass, A: Brain, B: Wrench, C: Bot, D: Users, CAP: Rocket };
 
 /* ---------- baked rich lessons (others are generated from a template) ---------- */
 const BAKED = {
@@ -172,6 +176,29 @@ function getLesson(mod, lens) {
   return b ? b(lens) : templateLesson(mod, lens);
 }
 
+/* ---- duration / pacing (daily-minutes model) ---- */
+// Parse the learner's chosen daily commitment ("~20 min/day") into a number.
+function dailyMinutes(profile) {
+  const m = String((profile && profile.time) || "").match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 20;
+}
+// Format a minute count as a friendly duration ("2h 45m", "40m").
+function fmtMins(mins) {
+  const h = Math.floor(mins / 60), m = Math.round(mins % 60);
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+// Total active minutes for a path's CORE modules, plus a daily-pace breakdown.
+function pathDuration(plan, profile) {
+  if (!plan) return { totalMin: 0, days: 0, perDay: 20 };
+  const core = plan.path.filter((m) => !m.optional && !m.bonus);
+  const totalMin = core.reduce((a, m) => a + timeToComplete(m.module_id), 0);
+  const perDay = dailyMinutes(profile);
+  const days = Math.max(1, Math.ceil(totalMin / perDay));
+  return { totalMin, days, perDay };
+}
+
 /* ============================== LLM (provider-agnostic) ============================== */
 // Thin wrappers over the OpenAI-compatible client in llm.js (default provider: Groq, free).
 async function llmText(system, user, { task = "sandbox", maxTokens = 800, apiKey, signal } = {}) {
@@ -185,7 +212,7 @@ function stripMd(s) {
 
 /* ---- personalizer (live, with rule-based fallback) ---- */
 const PERSONALIZER_SYS = `You are the AI Operator Academy course-personalizer. Compose a personalized path from this exact module library (use only these IDs): F1,F2,F3,A1,A2,A3,A4,B1,B2,B3,B4,C1,C2,C3,C4,D1,D2,D3,D4,CAP.
-Rules: Everyone gets F1-F3 and CAP (CAP last). Map goal->lead track: Automate=C, Build=B, Boost=A, Train team=D, Explore=A+tasters. Add by role: Owner-> add C1 & D1; Manager/Team lead-> add D2,D3. Independent-> lean, favor A & B. Gate technical modules by comfort: "avoid"-> prefer C2 (Cowork) over B1, mark code-heavy optional; "guided"-> B1 with scaffolding; comfortable/codes-> full B + a bonus. Trim by time: <3h -> lead track + foundations + CAP only, others optional. Set depth (just-do-it|balanced|deep) and difficulty (guided|standard|stretch). Keep the core path SHORT (aim 6-9 core modules). Set example_lens to their industry+function. Write capstone_brief (one concrete asset sentence from their task) and roi_target (a measurable phrase).
+Rules: Everyone gets F1-F3 and CAP (CAP last). Map goal->lead track: Automate=C, Build=B, Boost=A, Train team=D, Explore=A+tasters. Add by role: Owner-> add C1 & D1; Manager/Team lead-> add D2,D3. Independent-> lean, favor A & B. Gate technical modules by comfort: "avoid"-> prefer C2 (Cowork) over B1, mark code-heavy optional; "guided"-> B1 with scaffolding; comfortable/codes-> full B + a bonus. The learner commits a small DAILY amount (≈10–45 min/day) — each lesson takes ~15–25 min to complete, so trim for low daily time: ≤10 min/day -> keep the core lean (foundations + lead track + CAP only), others optional. Set depth (just-do-it|balanced|deep) and difficulty (guided|standard|stretch). Keep the core path SHORT (aim 6-9 core modules). Set example_lens to their industry+function. Write capstone_brief (one concrete asset sentence from their task) and roi_target (a measurable phrase).
 Return ONLY JSON: {"learner_summary","lead_track","capstone_brief","roi_target","estimated_total_time","path":[{"module_id","depth","difficulty","example_lens","optional":bool,"bonus":bool,"why_included"}]}`;
 
 function fallbackPath(p) {
@@ -203,7 +230,7 @@ function fallbackPath(p) {
     lead_track: lead,
     capstone_brief: p.task ? `A reusable workflow that handles: ${p.task}` : "A reusable workflow built around your top task.",
     roi_target: "Measurable time saved every week on your chosen task.",
-    estimated_total_time: p.time === "Under 1 hour" || p.time === "1–3 hours" ? "4–5 hours" : "6–8 hours",
+    estimated_total_time: "computed from your path",
     path: ids.map((id) => ({ module_id: id, depth: id === "F3" || id === "A1" ? "just-do-it" : depth, difficulty: diff, example_lens: lens, optional: false, bonus: false, why_included: "Matched to your role, goal and available time." })),
   };
 }
@@ -502,7 +529,12 @@ function Enroll({ onDone, onBack }) {
         <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg,${T.clay},${T.amber})`, transition: "width .4s ease", borderRadius: 4 }} />
       </div>
       <div className="rise" key={step}>
-        <div style={{ fontFamily: mono, fontSize: 12, color: T.faint, marginBottom: 12 }}>QUESTION {step + 1} / {QUESTIONS.length}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <div style={{ minWidth: 38, height: 38, borderRadius: 10, background: `${T.amber}1c`, border: `1px solid ${T.amber}44`, display: "grid", placeItems: "center" }}>
+            {q.icon ? <q.icon size={19} color={T.amber} /> : <Sparkles size={19} color={T.amber} />}
+          </div>
+          <div style={{ fontFamily: mono, fontSize: 12, color: T.faint }}>QUESTION {step + 1} / {QUESTIONS.length}</div>
+        </div>
         <h2 style={{ fontFamily: serif, fontSize: 31, fontWeight: 600, margin: "0 0 8px", lineHeight: 1.18 }}>{q.q}</h2>
         {q.hint && <p style={{ color: T.faint, fontSize: 14, margin: "0 0 24px" }}>{q.hint}</p>}
         {q.type === "single" ? (
@@ -576,6 +608,7 @@ function PathReveal({ plan, profile, goal, onBegin }) {
   const core = plan.path.filter((m) => !m.optional && !m.bonus);
   const extra = plan.path.filter((m) => m.optional || m.bonus);
   const ms = milestoneState(goal, plan, {}, null);
+  const dur = pathDuration(plan, profile);
   return (
     <div className="rise" style={{ paddingTop: 40 }}>
       <Tag color={T.green}>Your personalized path</Tag>
@@ -604,7 +637,8 @@ function PathReveal({ plan, profile, goal, onBegin }) {
       <div style={{ display: "flex", gap: 22, flexWrap: "wrap", margin: "18px 0 30px" }}>
         <Stat icon={Target} label="Your capstone" value={plan.capstone_brief} wide />
         <Stat icon={TrendingUp} label="Target ROI" value={plan.roi_target} wide />
-        <Stat icon={Clock} label="Total time" value={plan.estimated_total_time} />
+        <Stat icon={Clock} label="Total focused time" value={`≈ ${fmtMins(dur.totalMin)}`} />
+        <Stat icon={CalendarClock} label="Your pace" value={`${dur.perDay} min/day → ~${dur.days} days`} />
         <Stat icon={Gauge} label="Lead track" value={TRACK_NAME[plan.lead_track] || "—"} />
       </div>
       <div style={{ display: "grid", gap: 10 }}>
@@ -630,14 +664,18 @@ function Stat({ icon: I, label, value, wide }) {
 }
 function ModuleRow({ m, n, muted }) {
   const mod = LIBRARY[m.module_id];
+  const TI = TRACK_ICON[mod.track] || BookOpen;
+  const mins = timeToComplete(m.module_id);
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 13, padding: "15px 17px", display: "flex", gap: 14, alignItems: "flex-start" }}>
-      <div style={{ minWidth: 30, height: 30, borderRadius: 8, background: muted ? T.surfaceHi : `${T.amber}1c`, color: muted ? T.faint : T.amber, display: "grid", placeItems: "center", fontFamily: mono, fontSize: 13, fontWeight: 500 }}>{n}</div>
+      <div style={{ minWidth: 34, height: 34, borderRadius: 9, background: muted ? T.surfaceHi : `${T.amber}1c`, color: muted ? T.faint : T.amber, display: "grid", placeItems: "center" }}><TI size={17} /></div>
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: mono, fontSize: 12, color: T.faint }}>{String(n).padStart(2, "0")}</span>
           <span style={{ fontWeight: 600, fontSize: 16 }}>{mod.title}</span>
           <Tag>{TRACK_NAME[mod.track]}</Tag>
           <Tag color={T.blue}>{m.difficulty}</Tag>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: mono, fontSize: 11, color: T.faint }}><Timer size={12} />{mins} min</span>
         </div>
         <div style={{ color: T.dim, fontSize: 13.5, marginTop: 5, lineHeight: 1.45 }}>{m.why_included || mod.blurb}</div>
       </div>
@@ -732,10 +770,11 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
 
   return (
     <div className="rise" style={{ paddingTop: 34 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, color: T.faint, fontSize: 13 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, color: T.faint, fontSize: 13, flexWrap: "wrap" }}>
         <span style={{ fontFamily: mono }}>{String(idx + 1).padStart(2, "0")}</span>
         <span>·</span><Tag>{TRACK_NAME[mod.track]}</Tag><Tag color={T.blue}>{m.depth}</Tag>
         <Tag color={coach.changed ? T.green : T.amber}>{coach.difficulty}{coach.changed === "up" ? " ↑" : coach.changed === "down" ? " ↓" : ""}</Tag>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: mono, fontSize: 11.5 }}><Timer size={13} color={T.amber} />≈ {timeToComplete(m.module_id)} min</span>
       </div>
       <h2 style={{ fontFamily: serif, fontSize: 33, fontWeight: 600, margin: "0 0 18px", lineHeight: 1.16 }}>{A ? A.title : mod.title}</h2>
 
@@ -760,21 +799,25 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
           )}
           {A ? (
             <>
-              <Beat n="01" label="Why this matters"><Markdown md={ov(A.hookMd)} T={T} mono={mono} /></Beat>
-              <Beat n="02" label="The idea"><Markdown md={ov(A.conceptMd)} T={T} mono={mono} /></Beat>
-              <Beat n="03" label={A.demoTitle || "Walkthrough"}><Markdown md={ov(A.demoMd)} T={T} mono={mono} /></Beat>
+              <Beat n="01" label="Why this matters" icon={Lightbulb}><Markdown md={ov(A.hookMd)} T={T} mono={mono} /></Beat>
+              <Beat n="02" label="The idea" icon={Brain}><Markdown md={ov(A.conceptMd)} T={T} mono={mono} /></Beat>
+              <Beat n="03" label={A.demoTitle || "Walkthrough"} icon={PlayCircle}><Markdown md={ov(A.demoMd)} T={T} mono={mono} /></Beat>
             </>
           ) : (
             <>
-              <Beat n="01" label="Why this matters">{L.hook}</Beat>
-              <Beat n="02" label="The idea">{L.concept}</Beat>
-              <Beat n="03" label={L.demoTitle || "Walkthrough"}>
+              <Beat n="01" label="Why this matters" icon={Lightbulb}>{L.hook}</Beat>
+              <Beat n="02" label="The idea" icon={Brain}>{L.concept}</Beat>
+              <Beat n="03" label={L.demoTitle || "Walkthrough"} icon={PlayCircle}>
                 <ol style={{ margin: "6px 0 0", paddingLeft: 18, color: T.dim, lineHeight: 1.7 }}>
                   {L.demo.map((d, i) => <li key={i} style={{ marginBottom: 4 }}>{d}</li>)}
                 </ol>
               </Beat>
             </>
           )}
+
+          {A && A.caseStudyMd && <CaseStudy md={ov(A.caseStudyMd)} />}
+          {A && A.sourcesMd && <Sources md={ov(A.sourcesMd)} />}
+
           <div style={{ marginTop: 26 }}><Btn onClick={() => setPhase("do")} icon={Terminal}>{isCap ? "Build my capstone" : "Try it in the sandbox"}</Btn></div>
         </div>
       )}
@@ -882,7 +925,7 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
           {/* APPLY + RETAIN + ROI after passing */}
           {passed && (
             <div className="rise">
-              <Beat n="06" label="Apply to your real work" tint={T.green}>
+              <Beat n="06" label="Apply to your real work" tint={T.green} icon={Rocket}>
                 {A ? <Markdown md={ov(A.applyMd)} T={T} mono={mono} /> : L.apply}
               </Beat>
 
@@ -922,10 +965,12 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
   );
 }
 
-function Beat({ n, label, children, tint = T.amber }) {
+function Beat({ n, label, children, tint = T.amber, icon: I }) {
   return (
     <div style={{ display: "flex", gap: 16, marginBottom: 22 }}>
-      <div style={{ fontFamily: mono, fontSize: 12, color: tint, paddingTop: 3, minWidth: 22 }}>{n}</div>
+      <div style={{ minWidth: 32, height: 32, borderRadius: 9, background: `${tint}1c`, border: `1px solid ${tint}3a`, display: "grid", placeItems: "center" }}>
+        {I ? <I size={16} color={tint} /> : <span style={{ fontFamily: mono, fontSize: 12, color: tint }}>{n}</span>}
+      </div>
       <div style={{ flex: 1, borderLeft: `1px solid ${T.line}`, paddingLeft: 16 }}>
         <div style={{ fontFamily: mono, fontSize: 11.5, color: T.faint, letterSpacing: 1, textTransform: "uppercase", marginBottom: 7 }}>{label}</div>
         <div style={{ fontSize: 16, lineHeight: 1.62, color: T.text }}>{children}</div>
@@ -933,6 +978,32 @@ function Beat({ n, label, children, tint = T.amber }) {
     </div>
   );
 }
+// Sourced, real-world evidence callout (illustrative scenarios are labelled in-content).
+function CaseStudy({ md }) {
+  return (
+    <div style={{ background: `linear-gradient(135deg, ${T.blue}12, ${T.surface})`, border: `1px solid ${T.blue}3a`, borderRadius: 14, padding: "16px 18px", margin: "8px 0 22px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <BarChart3 size={16} color={T.blue} />
+        <span style={{ fontFamily: mono, fontSize: 11.5, letterSpacing: 1, textTransform: "uppercase", color: T.blue }}>Case study · from the field</span>
+      </div>
+      <Markdown md={md} T={T} mono={mono} />
+    </div>
+  );
+}
+
+// "Go deeper" — links to genuine, primary sources (Anthropic docs, standards, research).
+function Sources({ md }) {
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 14, padding: "14px 18px", margin: "0 0 22px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <GraduationCap size={16} color={T.amber} />
+        <span style={{ fontFamily: mono, fontSize: 11.5, letterSpacing: 1, textTransform: "uppercase", color: T.faint }}>Go deeper · primary sources</span>
+      </div>
+      <div style={{ fontSize: 13.5 }}><Markdown md={md} T={T} mono={mono} /></div>
+    </div>
+  );
+}
+
 function Feedback({ result }) {
   const tones = { mastered: T.green, solid: T.green, developing: T.amber, retry: T.red };
   const c = tones[result.outcome] || T.amber;

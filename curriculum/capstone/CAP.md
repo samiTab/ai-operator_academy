@@ -83,6 +83,14 @@ This is the full payoff your whole path was aiming at: a real asset, running in 
 ### 🔎 Honest limit
 A capstone proves you can build and ship one real asset with AI — it's demonstrated practical capability, not an academic accreditation, and (like everything you built) it still needs the human judgment, verification, and gates you practiced. The asset will need maintenance as tools and your needs change. That's not a weakness of the credential — it's the honest framing that makes it trustworthy, and it's exactly how the certificate is described.
 
+### 📊 Case study — "shipped and measured" is what real teams report
+**Grounded in published outcomes.** Anthropic maintains a library of customer stories where organizations describe deploying Claude with *specific, measured* results — hours reclaimed, turnaround times cut, work that used to take days done in hours. The common thread is exactly your capstone standard: the wins that count are the ones tied to a real workflow and a defensible number, not a demo that impressed in a meeting and was never used again. That's also why an honest, modest ROI figure beats an inflated one — a number you can defend is what turns this certificate from a badge into a portfolio piece, and it's the same discipline (build → ship → measure → verify) every track in this course trained.
+
+### 📚 Go deeper
+- [Anthropic — Customer stories](https://www.anthropic.com/customers): real organizations' measured outcomes from putting Claude to work — useful framing for your own ROI claim.
+- [Anthropic Academy — learn & build with Claude](https://www.anthropic.com/learn): where to keep going after your capstone (courses, guides, and deeper builds).
+- [Anthropic — Prompt engineering overview](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview): the reference to keep sharpening the toolkit behind your shipped asset.
+
 ```json
 {
   "module_id": "CAP",
