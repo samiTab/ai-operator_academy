@@ -734,8 +734,13 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
   const ws = buildWorkshop(plan, progress, build, (goal && goal.short) || plan.capstone_brief || "your asset");
   const myPiece = ws.deliverable.findIndex((d) => d.moduleId === m.module_id); // -1 if toolkit/capstone
 
+  // Revisit support: if this lesson is already completed, surface that and seed
+  // the learner's saved Workshop work so reopening it isn't a dead-end.
+  const savedComp = (build && build.components && build.components[m.module_id]) || null;
+  const alreadyDone = !!(progress[m.module_id] && progress[m.module_id].outcome && progress[m.module_id].outcome !== "retry");
+
   const [phase, setPhase] = useState("learn"); // learn -> do -> done
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(savedComp ? savedComp.content || "" : "");
   const [sandboxOut, setSandboxOut] = useState("");
   const [running, setRunning] = useState(false);
   const [grading, setGrading] = useState(false);
@@ -820,6 +825,15 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
             <div style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: 1, textTransform: "uppercase", color: T.amber, marginBottom: 3 }}>Principle</div>
             <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", lineHeight: 1.4, color: T.text }}>{ov(A.principleMd)}</div>
           </div>
+        </div>
+      )}
+
+      {alreadyDone && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: `${T.green}12`, border: `1px solid ${T.green}3a`, borderRadius: 12, padding: "12px 16px", marginBottom: 18 }}>
+          <CircleCheck size={18} color={T.green} />
+          <span style={{ flex: 1, minWidth: 180, fontSize: 13.5, color: T.dim }}>You've completed this lesson. Review it, refine your saved work below, or keep moving.</span>
+          <Btn onClick={onNext} icon={idx < plan.path.length - 1 ? ArrowRight : Award} style={{ padding: "9px 16px", fontSize: 14 }}>{idx < plan.path.length - 1 ? "Next lesson" : "Finish"}</Btn>
+          <Btn kind="ghost" onClick={onJumpDash} style={{ padding: "9px 14px", fontSize: 13 }}>Dashboard</Btn>
         </div>
       )}
 
