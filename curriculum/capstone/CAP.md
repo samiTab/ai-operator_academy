@@ -91,6 +91,15 @@ A capstone proves you can build and ship one real asset with AI — it's demonst
 - [Anthropic Academy — learn & build with Claude](https://www.anthropic.com/learn): where to keep going after your capstone (courses, guides, and deeper builds).
 - [Anthropic — Prompt engineering overview](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview): the reference to keep sharpening the toolkit behind your shipped asset.
 
+### 🧭 Principle
+A capstone is a real asset, demoed and adopted, with an honest number — not a quiz.
+
+### ✅ Rule of thumb
+Demo on a real case, never a mockup. An honest, modest ROI beats an impressive, undefendable one.
+
+### 🚀 Pro move
+Set a maintenance date today — an asset you build but don't adopt and maintain saved you exactly zero hours.
+
 ```json
 {
   "module_id": "CAP",

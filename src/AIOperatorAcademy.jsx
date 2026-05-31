@@ -811,7 +811,17 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
         <Tag color={coach.changed ? T.green : T.amber}>{coach.difficulty}{coach.changed === "up" ? " ↑" : coach.changed === "down" ? " ↓" : ""}</Tag>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: mono, fontSize: 11.5 }}><Timer size={13} color={T.amber} />≈ {timeToComplete(m.module_id)} min</span>
       </div>
-      <h2 style={{ fontFamily: serif, fontSize: 33, fontWeight: 600, margin: "0 0 18px", lineHeight: 1.16 }}>{A ? A.title : mod.title}</h2>
+      <h2 style={{ fontFamily: serif, fontSize: 33, fontWeight: 600, margin: "0 0 14px", lineHeight: 1.16 }}>{A ? A.title : mod.title}</h2>
+
+      {A && A.principleMd && (
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", borderLeft: `3px solid ${T.amber}`, background: `${T.amber}0e`, borderRadius: "0 12px 12px 0", padding: "12px 16px", marginBottom: 18 }}>
+          <Compass size={17} color={T.amber} style={{ marginTop: 3, flexShrink: 0 }} />
+          <div>
+            <div style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: 1, textTransform: "uppercase", color: T.amber, marginBottom: 3 }}>Principle</div>
+            <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", lineHeight: 1.4, color: T.text }}>{ov(A.principleMd)}</div>
+          </div>
+        </div>
+      )}
 
       {coach.note && (
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: `${T.green}12`, border: `1px solid ${T.green}3a`, borderRadius: 12, padding: "12px 15px", marginBottom: 14 }}>
@@ -886,6 +896,13 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
             </div>
             {A ? <Markdown md={ov(A.taskMd)} T={T} mono={mono} /> : <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: 0 }}>{L.task}</p>}
           </div>
+
+          {A && A.ruleMd && (
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: `${T.green}10`, border: `1px solid ${T.green}3a`, borderRadius: 12, padding: "12px 15px", marginBottom: 18 }}>
+              <ShieldCheck size={16} color={T.green} style={{ marginTop: 2, flexShrink: 0 }} />
+              <div style={{ fontSize: 14, lineHeight: 1.55, color: T.dim }}><b style={{ color: T.green }}>Rule of thumb — </b>{ov(A.ruleMd)}</div>
+            </div>
+          )}
 
           {isCap && <CapstoneAssembly ws={ws} />}
 
@@ -1004,6 +1021,16 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
               <Beat n="06" label="Apply to your real work" tint={T.green} icon={Rocket}>
                 {A ? <Markdown md={ov(A.applyMd)} T={T} mono={mono} /> : L.apply}
               </Beat>
+
+              {A && A.proMoveMd && (
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: `${T.clay}12`, border: `1px solid ${T.clay}44`, borderRadius: 14, padding: "14px 16px", margin: "0 0 14px" }}>
+                  <Rocket size={16} color={T.claySoft} style={{ marginTop: 2, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontFamily: mono, fontSize: 10.5, letterSpacing: 1, textTransform: "uppercase", color: T.claySoft, marginBottom: 4 }}>Pro move</div>
+                    <div style={{ fontSize: 14.5, lineHeight: 1.55, color: T.text }}>{ov(A.proMoveMd)}</div>
+                  </div>
+                </div>
+              )}
 
               {/* Keepable asset */}
               {A && A.assetCode && (

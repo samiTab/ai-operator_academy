@@ -98,6 +98,7 @@ function parseLesson(raw) {
   const sections = splitSections(body);
   const beats = {};
   let assetMd = "", mistakesMd = "", limitMd = "", caseStudyMd = "", sourcesMd = "";
+  let principleMd = "", ruleMd = "", proMoveMd = "";
   for (const s of sections) {
     if (s.level === 2) {
       const n = s.title.match(/^(\d+)\./);
@@ -109,6 +110,9 @@ function parseLesson(raw) {
       else if (t.includes("honest limit")) limitMd = s.md;
       else if (t.includes("case study") || t.includes("from the field")) caseStudyMd = s.md;
       else if (t.includes("go deeper") || t.includes("sources")) sourcesMd = s.md;
+      else if (t.includes("principle")) principleMd = s.md;
+      else if (t.includes("rule of thumb") || t.includes("decision rule")) ruleMd = s.md;
+      else if (t.includes("pro move") || t.includes("level up")) proMoveMd = s.md;
     }
   }
 
@@ -133,6 +137,9 @@ function parseLesson(raw) {
     limitMd,
     caseStudyMd,
     sourcesMd,
+    principleMd,
+    ruleMd,
+    proMoveMd,
     roiMin: ROI_MIN[id] != null ? ROI_MIN[id] : 25,
     rubric,
     unlocksCertificate: !!(rubric && rubric.unlocks_certificate),
