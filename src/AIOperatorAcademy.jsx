@@ -13,6 +13,7 @@ import { getAuthoredLesson, timeToComplete } from "./curriculum.js";
 import { chat, chatJson, parseJsonLoose } from "./llm.js";
 import { goalFor, milestoneState } from "./goals.js";
 import { applyOverlay, goalConnector, overlayContext } from "./overlay.js";
+import { buildWorkshop, sequenceFor, componentDef } from "./workshop.js";
 
 /* ============================== THEME ============================== */
 const T = {
@@ -337,6 +338,7 @@ export default function App() {
   const [idx, setIdx] = useState(0);
   const [streak, setStreak] = useState(0);
   const [credential, setCredential] = useState(null); // issued certificate record
+  const [build, setBuild] = useState({ components: {} }); // the Workshop (throughline build)
   const [byoKey, setByoKeyState] = useState(() => { try { return localStorage.getItem("aoa:llmkey") || ""; } catch (e) { return ""; } });
   const setByoKey = (k) => { setByoKeyState(k); try { k ? localStorage.setItem("aoa:llmkey", k) : localStorage.removeItem("aoa:llmkey"); } catch (e) {} };
   const goal = goalFor(profile);
@@ -348,6 +350,7 @@ export default function App() {
     if (local && local.plan) {
       setProfile(local.profile || {}); setPlan(local.plan); setProgress(local.progress || {});
       setStreak(local.streak || 0); setCredential(local.credential || null);
+      setBuild(local.build && local.build.components ? local.build : { components: {} });
     }
     setScreen("welcome");
 
@@ -361,6 +364,7 @@ export default function App() {
         if (remote && remote.plan) {
           setProfile(remote.profile || {}); setPlan(remote.plan); setProgress(remote.progress || {});
           setStreak(remote.streak || 0); setCredential(remote.credential || null);
+          setBuild(remote.build && remote.build.components ? remote.build : { components: {} });
           saveState(remote);
         }
       } catch {}
@@ -370,7 +374,7 @@ export default function App() {
   // Save: localStorage immediately, Neon debounced 2 s
   useEffect(() => {
     if (!plan) return;
-    const state = { profile, plan, progress, streak, credential };
+    const state = { profile, plan, progress, streak, credential, build };
     saveState(state);
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -384,7 +388,7 @@ export default function App() {
         });
       } catch {}
     }, 2000);
-  }, [profile, plan, progress, streak, credential]); // eslint-disable-line
+  }, [profile, plan, progress, streak, credential, build]); // eslint-disable-line
 
   const corePath = plan ? plan.path.filter((m) => !m.optional && !m.bonus) : [];
   const doneCore = corePath.filter((m) => progress[m.module_id] && progress[m.module_id].outcome !== "retry").length;
@@ -400,13 +404,37 @@ export default function App() {
     });
   }, []);
 
+  // Workshop — capture a lesson's component (auto-seeded from the learner's submission)
+  const captureComponent = useCallback((modId, content, outcome) => {
+    setBuild((b) => {
+      const comps = { ...((b && b.components) || {}) };
+      const def = componentDef(modId);
+      const prev = comps[modId] || {};
+      const seed = content != null && String(content).trim() ? String(content) : (prev.content || "");
+      comps[modId] = {
+        kind: def.kind, title: def.title, content: seed,
+        reflection: prev.reflection || "", outcome: outcome || prev.outcome || null,
+        addedAt: prev.addedAt || new Date().toISOString(),
+      };
+      return { ...b, components: comps };
+    });
+  }, []);
+  const updateComponent = useCallback((modId, patch) => {
+    setBuild((b) => {
+      const comps = { ...((b && b.components) || {}) };
+      comps[modId] = { ...(comps[modId] || componentDef(modId)), ...patch };
+      return { ...b, components: comps };
+    });
+  }, []);
+
   const resetAll = async () => {
     clearState();
     try {
       const token = await getToken();
       if (token) await fetch("/api/learner", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     } catch {}
-    setProfile({}); setPlan(null); setProgress({}); setIdx(0); setStreak(0); setCredential(null); setScreen("welcome");
+    setProfile({}); setPlan(null); setProgress({}); setIdx(0); setStreak(0); setCredential(null);
+    setBuild({ components: {} }); setScreen("welcome");
   };
 
   return (
@@ -418,14 +446,15 @@ export default function App() {
         {screen === "loading" && <Center><Loader2 size={26} style={{ animation: "spin 1s linear infinite", color: T.amber }} /></Center>}
         {screen === "welcome" && <Welcome hasPlan={!!plan} onStart={() => setScreen("enroll")} onResume={() => setScreen("dashboard")} />}
         {screen === "enroll" && <Enroll onDone={(p) => { setProfile(p); setScreen("building"); }} onBack={() => setScreen("welcome")} />}
-        {screen === "building" && <Building profile={profile} onReady={(pl) => { setPlan(pl); setProgress({}); setIdx(0); setScreen("path"); }} />}
+        {screen === "building" && <Building profile={profile} onReady={(pl) => { setPlan(pl); setProgress({}); setIdx(0); setBuild({ components: {} }); setScreen("path"); }} />}
         {screen === "path" && plan && <PathReveal plan={plan} profile={profile} goal={goal} onBegin={() => { setIdx(0); setScreen("lesson"); }} />}
         {screen === "lesson" && plan && (
           <Lesson key={idx} plan={plan} idx={idx} progress={progress} profile={profile} goal={goal}
-            byoKey={byoKey} setByoKey={setByoKey}
-            onComplete={(modId, outcome, roiMin, signals) => {
+            byoKey={byoKey} setByoKey={setByoKey} build={build} onUpdateComponent={updateComponent}
+            onComplete={(modId, outcome, roiMin, signals, content) => {
               setProgress((pr) => ({ ...pr, [modId]: { outcome, roiMin, signals } }));
               setStreak((s) => s + 1);
+              captureComponent(modId, content, outcome);
             }}
             onNext={() => { if (idx < plan.path.length - 1) { setIdx(idx + 1); } else setScreen("dashboard"); }}
             onJumpDash={() => setScreen("dashboard")} />
@@ -433,10 +462,11 @@ export default function App() {
         {screen === "dashboard" && plan && (
           <Dashboard plan={plan} progress={progress} streak={streak} roiTotal={roiTotal} goal={goal}
             doneCore={doneCore} coreLen={corePath.length} allCoreDone={allCoreDone}
+            build={build} onUpdateComponent={updateComponent}
             onOpen={(i) => { setIdx(i); setScreen("lesson"); }}
             onCert={() => setScreen("certificate")} />
         )}
-        {screen === "certificate" && plan && <Certificate plan={plan} profile={profile} progress={progress} roiTotal={roiTotal} credential={credential} onIssue={issueCredential} allCoreDone={allCoreDone} onBack={() => setScreen("dashboard")} />}
+        {screen === "certificate" && plan && <Certificate plan={plan} profile={profile} progress={progress} roiTotal={roiTotal} credential={credential} onIssue={issueCredential} allCoreDone={allCoreDone} build={build} onBack={() => setScreen("dashboard")} />}
       </div>
     </div>
   );
@@ -684,7 +714,7 @@ function ModuleRow({ m, n, muted }) {
 }
 
 /* ------------------------------- LESSON PLAYER ------------------------------- */
-function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onComplete, onNext, onJumpDash }) {
+function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onComplete, onNext, onJumpDash, build, onUpdateComponent }) {
   const m = plan.path[idx];
   const mod = LIBRARY[m.module_id];
   const lens = m.example_lens || "your work";
@@ -700,6 +730,9 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
   const ov = (md) => applyOverlay(md, ctx);
   const ms = milestoneState(goal, plan, progress, m.module_id);
   const myMilestone = ms.findIndex((x) => x.current);
+  const seq = sequenceFor(plan, idx);
+  const ws = buildWorkshop(plan, progress, build, (goal && goal.short) || plan.capstone_brief || "your asset");
+  const myPiece = ws.deliverable.findIndex((d) => d.moduleId === m.module_id); // -1 if toolkit/capstone
 
   const [phase, setPhase] = useState("learn"); // learn -> do -> done
   const [draft, setDraft] = useState("");
@@ -712,6 +745,8 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
   const [sandboxMode, setSandboxMode] = useState("byoc"); // byoc = own Claude | inapp = practice here
   const [copied, setCopied] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [reflDraft, setReflDraft] = useState("");
+  const [reflSaved, setReflSaved] = useState(false);
 
   // Scroll to top whenever a new lesson mounts (key={idx} causes remount on each lesson change)
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }) }, []);
@@ -761,7 +796,7 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
         attempts: thisAttempt,
         struggled: thisAttempt > 1,
       };
-      onComplete(m.module_id, g.outcome, roiMin, signals);
+      onComplete(m.module_id, g.outcome, roiMin, signals, draft);
       setPhase("done");
     }
   };
@@ -788,14 +823,35 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
       {goal && myMilestone >= 0 && (
         <div style={{ display: "flex", gap: 9, alignItems: "center", background: `${T.amber}10`, border: `1px solid ${T.amber}33`, borderRadius: 12, padding: "10px 14px", marginBottom: 20, flexWrap: "wrap" }}>
           <Flag size={14} color={T.amber} />
-          <span style={{ fontSize: 13, color: T.dim }}>Milestone <b style={{ color: T.amberHi }}>{myMilestone + 1} of {ms.length}</b> toward {goal.short}: <b style={{ color: T.text }}>{ms[myMilestone].label}</b></span>
+          <span style={{ fontSize: 13, color: T.dim }}>Milestone <b style={{ color: T.amberHi }}>{myMilestone + 1} of {ms.length}</b> toward {goal.short}: <b style={{ color: T.text }}>{ms[myMilestone].label}</b>{myPiece >= 0 && ws.total > 0 ? <span style={{ color: T.faint }}> · Workshop piece {myPiece + 1} of {ws.total}</span> : null}</span>
         </div>
       )}
 
       {phase === "learn" && (
         <div>
           {goal && (
-            <div style={{ marginBottom: 18 }}><Markdown md={goalConnector(ctx)} T={T} mono={mono} /></div>
+            <div style={{ marginBottom: 14 }}><Markdown md={goalConnector(ctx)} T={T} mono={mono} /></div>
+          )}
+          {seq && (seq.buildsOn || seq.setsUp) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 22, fontSize: 12.5 }}>
+              {seq.buildsOn && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: T.faint, background: T.surface, border: `1px solid ${T.line}`, borderRadius: 9, padding: "6px 10px" }}>
+                  <span style={{ fontFamily: mono, fontSize: 10.5, textTransform: "uppercase", letterSpacing: .5 }}>builds on</span> {seq.buildsOn}
+                </span>
+              )}
+              <ArrowRight size={14} color={T.faint} />
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: T.text, background: `${T.amber}1c`, border: `1px solid ${T.amber}55`, borderRadius: 9, padding: "6px 10px" }}>
+                <Wrench size={12} color={T.amber} /><span style={{ fontFamily: mono, fontSize: 10.5, textTransform: "uppercase", letterSpacing: .5, color: T.amber }}>adds</span> {seq.adds}
+              </span>
+              {seq.setsUp && (
+                <>
+                  <ArrowRight size={14} color={T.faint} />
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: T.faint, background: T.surface, border: `1px solid ${T.line}`, borderRadius: 9, padding: "6px 10px" }}>
+                    <span style={{ fontFamily: mono, fontSize: 10.5, textTransform: "uppercase", letterSpacing: .5 }}>sets up</span> {seq.setsUp}
+                  </span>
+                </>
+              )}
+            </div>
           )}
           {A ? (
             <>
@@ -830,6 +886,8 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
             </div>
             {A ? <Markdown md={ov(A.taskMd)} T={T} mono={mono} /> : <p style={{ color: T.dim, fontSize: 14.5, lineHeight: 1.6, margin: 0 }}>{L.task}</p>}
           </div>
+
+          {isCap && <CapstoneAssembly ws={ws} />}
 
           {/* PRACTICE MODE TOGGLE */}
           <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
@@ -901,7 +959,7 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
               {result && !passed && <span style={{ color: T.faint, fontSize: 13 }}>Tweak your prompt above and resubmit — no penalty for trying again.</span>}
               {attempts >= 1 && !passed && (
                 <button onClick={() => {
-                  onComplete(m.module_id, "solid", roiMin, { first_try_success: false, showed_advanced_ability: false, attempts, struggled: true });
+                  onComplete(m.module_id, "solid", roiMin, { first_try_success: false, showed_advanced_ability: false, attempts, struggled: true }, draft);
                   onNext();
                 }} style={{ background: "transparent", border: "none", color: T.faint, fontSize: 13, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
                   Skip and continue →
@@ -925,6 +983,24 @@ function Lesson({ plan, idx, progress, profile, goal, byoKey, setByoKey, onCompl
           {/* APPLY + RETAIN + ROI after passing */}
           {passed && (
             <div className="rise">
+              {componentDef(m.module_id).kind !== "capstone" && (
+                <div style={{ background: `${T.amber}14`, border: `1px solid ${T.amber}44`, borderRadius: 14, padding: "14px 16px", margin: "8px 0 18px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+                    <Wrench size={16} color={T.amber} />
+                    <span style={{ fontSize: 14.5 }}>Added <b style={{ color: T.amberHi }}>{componentDef(m.module_id).title}</b> to your Workshop.</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: T.faint, margin: "8px 0 10px", lineHeight: 1.5 }}>This is a real piece of {(goal && goal.short) || "your asset"} — you'll snap it together at the capstone. Edit it anytime from your dashboard.</div>
+                  {!reflSaved ? (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <input value={reflDraft} onChange={(e) => setReflDraft(e.target.value)} placeholder="How will this change your week? (optional)"
+                        style={{ flex: "1 1 280px", background: "#0F0D0A", border: `1px solid ${T.line}`, borderRadius: 8, color: T.text, padding: "9px 12px", fontSize: 13, outline: "none" }} />
+                      {reflDraft.trim() && <Btn kind="soft" onClick={() => { onUpdateComponent && onUpdateComponent(m.module_id, { reflection: reflDraft.trim() }); setReflSaved(true); }} style={{ padding: "8px 14px", fontSize: 13 }}>Save note</Btn>}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: T.green }}><CircleCheck size={14} style={{ verticalAlign: -2 }} /> Reflection saved to your Workshop.</div>
+                  )}
+                </div>
+              )}
               <Beat n="06" label="Apply to your real work" tint={T.green} icon={Rocket}>
                 {A ? <Markdown md={ov(A.applyMd)} T={T} mono={mono} /> : L.apply}
               </Beat>
@@ -1019,8 +1095,130 @@ function Feedback({ result }) {
   );
 }
 
+/* ------------------------------- WORKSHOP ------------------------------- */
+// The throughline build: a persistent workspace that fills with the components the
+// learner produces each lesson, assembling toward their goal deliverable.
+function WorkshopCard({ item, pathIdx, onOpen, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [content, setContent] = useState(item.content || "");
+  const [reflection, setReflection] = useState(item.reflection || "");
+  const done = item.status === "done";
+  const current = item.status === "current";
+  const accent = done ? T.green : current ? T.amber : T.faint;
+  const save = () => { onSave(item.moduleId, { content, reflection }); setEditing(false); };
+  return (
+    <div style={{ background: T.bg2, border: `1px solid ${done ? T.green + "44" : current ? T.amber + "44" : T.line}`, borderRadius: 12, padding: "12px 14px", opacity: item.status === "upcoming" ? .6 : 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ minWidth: 24, height: 24, borderRadius: 7, background: `${accent}22`, display: "grid", placeItems: "center" }}>
+          {done ? <Check size={14} color={accent} /> : current ? <Play size={12} color={accent} /> : <Lock size={11} color={accent} />}
+        </div>
+        <span style={{ flex: 1, fontSize: 14.5, fontWeight: 600, color: item.status === "upcoming" ? T.dim : T.text }}>{item.title}</span>
+        {done && item.filled && <button onClick={() => setEditing((v) => !v)} style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.dim, borderRadius: 7, fontSize: 12, padding: "3px 9px", cursor: "pointer", fontFamily: sans }}>{editing ? "Close" : "Edit"}</button>}
+        {current && <button onClick={() => onOpen(pathIdx)} style={{ background: "transparent", border: `1px solid ${T.amber}55`, color: T.amber, borderRadius: 7, fontSize: 12, padding: "3px 9px", cursor: "pointer", fontFamily: sans }}>Open</button>}
+      </div>
+      {!editing && item.filled && (
+        <div style={{ marginTop: 8, fontSize: 12.5, color: T.dim, lineHeight: 1.5, maxHeight: 60, overflow: "hidden", whiteSpace: "pre-wrap", fontFamily: mono, background: "#0F0D0A", border: `1px solid ${T.line}`, borderRadius: 8, padding: "8px 10px" }}>
+          {(item.content || "").slice(0, 220) || "—"}{(item.content || "").length > 220 ? "…" : ""}
+        </div>
+      )}
+      {!editing && item.reflection && (
+        <div style={{ marginTop: 8, fontSize: 12.5, color: T.green, lineHeight: 1.5, fontStyle: "italic" }}>“{item.reflection}”</div>
+      )}
+      {editing && (
+        <div style={{ marginTop: 10 }}>
+          <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={5}
+            style={{ width: "100%", background: "#0F0D0A", border: `1px solid ${T.line}`, borderRadius: 8, color: T.text, padding: "10px 12px", fontSize: 13, lineHeight: 1.55, resize: "vertical", outline: "none", fontFamily: mono }} />
+          <input value={reflection} onChange={(e) => setReflection(e.target.value)} placeholder="How will this change your week? (optional)"
+            style={{ width: "100%", marginTop: 8, background: "#0F0D0A", border: `1px solid ${T.line}`, borderRadius: 8, color: T.text, padding: "9px 12px", fontSize: 13, outline: "none" }} />
+          <div style={{ marginTop: 8 }}><Btn kind="soft" onClick={save} icon={Check} style={{ padding: "7px 14px", fontSize: 13 }}>Save</Btn></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkshopPanel({ plan, progress, build, goal, onOpen, onUpdateComponent }) {
+  const [showToolkit, setShowToolkit] = useState(false);
+  const deliverableTitle = (goal && goal.short) || plan.capstone_brief || "your asset";
+  const ws = buildWorkshop(plan, progress, build, deliverableTitle);
+  const idxOf = (modId) => plan.path.findIndex((m) => m.module_id === modId);
+  const pct = ws.total ? Math.round((ws.filled / ws.total) * 100) : 0;
+  if (!ws.deliverable.length && !ws.toolkit.length) return null;
+  return (
+    <div style={{ background: `linear-gradient(135deg, ${T.amber}12, ${T.surface})`, border: `1px solid ${T.amber}3a`, borderRadius: 18, padding: "20px 22px", marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <Wrench size={18} color={T.amber} />
+        <span style={{ fontFamily: serif, fontSize: 21, fontWeight: 600 }}>Your Workshop</span>
+        <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 12, color: T.faint }}>{ws.filled}/{ws.total} pieces</span>
+      </div>
+      <div style={{ fontSize: 14.5, color: T.dim, marginBottom: 14 }}>Building: <b style={{ color: T.amberHi }}>{deliverableTitle}</b>{goal && goal.deliverable ? ` — ${goal.deliverable}` : ""}</div>
+      <div style={{ height: 6, background: T.bg2, borderRadius: 4, overflow: "hidden", marginBottom: 18 }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg,${T.clay},${T.amber})`, borderRadius: 4, transition: "width .5s ease" }} />
+      </div>
+      <div style={{ display: "grid", gap: 10 }}>
+        {ws.deliverable.map((item) => (
+          <WorkshopCard key={item.moduleId} item={item} pathIdx={idxOf(item.moduleId)} onOpen={onOpen} onSave={onUpdateComponent} />
+        ))}
+        {ws.capstone && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: T.bg2, border: `1px dashed ${T.amber}66`, borderRadius: 12, padding: "12px 14px" }}>
+            <Rocket size={16} color={T.amber} />
+            <span style={{ flex: 1, fontSize: 14.5, fontWeight: 600 }}>{ws.capstone.title}</span>
+            <span style={{ fontFamily: mono, fontSize: 11.5, color: T.faint }}>{ws.filled >= ws.total && ws.total > 0 ? "ready to assemble" : "assembles your pieces"}</span>
+          </div>
+        )}
+      </div>
+      {ws.toolkit.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <button onClick={() => setShowToolkit((v) => !v)} style={{ background: "transparent", border: "none", color: T.dim, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontFamily: sans, padding: 0 }}>
+            <ChevronRight size={15} style={{ transform: showToolkit ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+            Toolkit — {ws.toolkit.filter((t) => t.filled).length}/{ws.toolkit.length} reusable assets
+          </button>
+          {showToolkit && (
+            <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+              {ws.toolkit.map((item) => (
+                <WorkshopCard key={item.moduleId} item={item} pathIdx={idxOf(item.moduleId)} onOpen={onOpen} onSave={onUpdateComponent} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Capstone view — shows the pieces the learner built across the path, ready to assemble.
+function CapstoneAssembly({ ws }) {
+  if (!ws || !ws.deliverable.length) return null;
+  return (
+    <div style={{ background: `linear-gradient(135deg, ${T.green}12, ${T.surface})`, border: `1px solid ${T.green}3a`, borderRadius: 14, padding: 18, marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6, flexWrap: "wrap" }}>
+        <Wrench size={16} color={T.green} />
+        <b style={{ fontSize: 15 }}>Your pieces, ready to assemble</b>
+        <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 11.5, color: T.faint }}>{ws.filled}/{ws.total} built</span>
+      </div>
+      <p style={{ color: T.dim, fontSize: 13.5, margin: "0 0 12px", lineHeight: 1.55 }}>Everything below you already built across the path. Your capstone is snapping these into your finished <b style={{ color: T.amberHi }}>{ws.deliverableTitle}</b> — not starting over.</p>
+      <div style={{ display: "grid", gap: 8 }}>
+        {ws.deliverable.map((d) => (
+          <div key={d.moduleId} style={{ display: "flex", gap: 10, alignItems: "flex-start", background: T.bg2, border: `1px solid ${d.filled ? T.green + "44" : T.line}`, borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ minWidth: 22, height: 22, borderRadius: 6, background: d.filled ? `${T.green}22` : T.surfaceHi, display: "grid", placeItems: "center", marginTop: 1 }}>
+              {d.filled ? <Check size={13} color={T.green} /> : <span style={{ width: 9, height: 9, borderRadius: "50%", border: `1.5px solid ${T.faint}` }} />}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{d.title}</div>
+              {d.filled && (d.content || "").trim() && (
+                <div style={{ marginTop: 4, fontSize: 12, color: T.faint, fontFamily: mono, lineHeight: 1.45, maxHeight: 38, overflow: "hidden", whiteSpace: "pre-wrap" }}>{(d.content || "").slice(0, 140)}{(d.content || "").length > 140 ? "…" : ""}</div>
+              )}
+              {!d.filled && <div style={{ marginTop: 3, fontSize: 12, color: T.faint }}>Not captured yet — you can still finish this piece.</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------- DASHBOARD ------------------------------- */
-function Dashboard({ plan, progress, streak, roiTotal, goal, doneCore, coreLen, allCoreDone, onOpen, onCert }) {
+function Dashboard({ plan, progress, streak, roiTotal, goal, doneCore, coreLen, allCoreDone, build, onUpdateComponent, onOpen, onCert }) {
   const pct = coreLen ? Math.round((doneCore / coreLen) * 100) : 0;
   const weekly = Math.round(roiTotal); // mins; treat as per-cycle estimate
   const nextIdx = plan.path.findIndex((m) => !(progress[m.module_id] && progress[m.module_id].outcome !== "retry"));
@@ -1053,6 +1251,8 @@ function Dashboard({ plan, progress, streak, roiTotal, goal, doneCore, coreLen, 
         <Metric icon={Clock} value={`${weekly}m`} label="Time saved / cycle" color={T.amber} />
         <Metric icon={BookOpen} value={`${doneCore}/${coreLen}`} label="Core modules" color={T.green} />
       </div>
+
+      <WorkshopPanel plan={plan} progress={progress} build={build} goal={goal} onOpen={onOpen} onUpdateComponent={onUpdateComponent} />
 
       {allCoreDone ? (
         <div style={{ background: `linear-gradient(135deg, ${T.amber}22, ${T.clay}22)`, border: `1px solid ${T.amber}55`, borderRadius: 16, padding: 22, marginBottom: 26, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -1118,9 +1318,11 @@ function Metric({ icon: I, value, label, color }) {
 }
 
 /* ------------------------------- CERTIFICATE ------------------------------- */
-function Certificate({ plan, profile, progress, roiTotal, credential, onIssue, allCoreDone, onBack }) {
+function Certificate({ plan, profile, progress, roiTotal, credential, onIssue, allCoreDone, build, onBack }) {
   const [name, setName] = useState((credential && credential.learner_name) || profile.name || "");
   const title = { A: "Operator", B: "Builder", C: "Workflow Automation", D: "Team Enablement" }[plan.lead_track] || "Practitioner";
+  const goal = goalFor(profile);
+  const ws = buildWorkshop(plan, progress, build, (goal && goal.short) || plan.capstone_brief || "your asset");
 
   // Phase 4 — testimonial / ROI capture (consent-gated). Feeds the marketing funnel.
   const [rating, setRating] = useState(0);
@@ -1210,7 +1412,15 @@ function Certificate({ plan, profile, progress, roiTotal, credential, onIssue, a
         </div>
       </div>
 
-      <div style={{ marginTop: 22, background: T.surface, border: `1px solid ${T.line}`, borderRadius: 14, padding: 18 }}>
+      {(profile.success || ws.filled > 0) && (
+        <div style={{ marginTop: 22, background: `linear-gradient(135deg, ${T.green}12, ${T.surface})`, border: `1px solid ${T.green}3a`, borderRadius: 14, padding: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}><Flag size={15} color={T.green} /><b>Where you started → where you are</b></div>
+          {profile.success && <p style={{ margin: "0 0 10px", color: T.dim, fontSize: 14.5, lineHeight: 1.6 }}>On day one you said success looked like: <span style={{ fontStyle: "italic", color: T.text }}>“{profile.success}”</span></p>}
+          <p style={{ margin: 0, color: T.dim, fontSize: 14.5, lineHeight: 1.6 }}>You built <b style={{ color: T.amberHi }}>{ws.deliverableTitle}</b>{ws.total > 0 ? <> — assembled from <b style={{ color: T.text }}>{ws.filled} pieces</b> you made across the path</> : null}, saving <b style={{ color: T.green }}>≈ {Math.round(roiTotal)} minutes per cycle</b>.</p>
+        </div>
+      )}
+
+      <div style={{ marginTop: 16, background: T.surface, border: `1px solid ${T.line}`, borderRadius: 14, padding: 18 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}><Sparkles size={15} color={T.amber} /><b>Ready-to-share post</b></div>
         <p style={{ color: T.dim, fontSize: 14, lineHeight: 1.6, margin: 0, fontStyle: "italic" }}>
           "I just built {plan.capstone_brief.replace(/^A /, "a ")}{hours ? ` — saving about ${hours} a week` : ""} — and completed the AI Operator Academy (hands-on, not theory). The most useful thing I've done for my workflow in months."
